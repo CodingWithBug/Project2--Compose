@@ -1,0 +1,59 @@
+version: "3.9"
+
+# 该编排起两项服务：
+# 1) docker：Docker-in-Docker（DinD），开启 TLS，并通过网络别名 docker 暴露 2376 端口
+# 2) jenkins：Jenkins 通过 DOCKER_HOST=tcp://docker:2376 + TLS 访问 DinD
+# 满足作业要求：DinD、Jenkins、命名卷（jenkins-home、docker-data、certs）、带注释配置
+
+services:
+  docker:
+    image: docker:24-dind
+    container_name: dind
+    privileged: true           # DinD 需要特权
+    user: root
+    environment:
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      - docker-certs-ca:/certs/ca           # TLS CA 证书
+      - docker-certs-client:/certs/client   # TLS 客户端证书
+      - jenkins-home:/var/jenkins_home      #（兼容参考文档的挂载点）
+      - docker-data:/var/lib/docker         # 命名卷持久化镜像层（加速构建）
+    networks:
+      ci:
+        aliases:
+          - docker                           # 使 jenkins 能用 tcp://docker:2376 访问
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 15
+
+  jenkins:
+    image: jenkins/jenkins:lts-jdk17
+    container_name: jenkins
+    user: root
+    depends_on:
+      docker:
+        condition: service_healthy
+    environment:
+      DOCKER_HOST: "tcp://docker:2376"      # 通过别名连接 DinD（TLS）
+      DOCKER_CERT_PATH: "/certs/client"
+      DOCKER_TLS_VERIFY: "1"
+    volumes:
+      - docker-certs-client:/certs/client:ro
+      - jenkins-home:/var/jenkins_home      # Jenkins 主目录持久化
+      - /usr/bin/docker:/usr/bin/docker     # 提供 docker CLI（保持与参考一致）
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    networks:
+      - ci
+
+networks:
+  ci: {}
+
+volumes:
+  jenkins-home:
+  docker-data:
+  docker-certs-ca:
+  docker-certs-client:
