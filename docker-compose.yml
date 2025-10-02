@@ -1,27 +1,30 @@
 version: "3.9"
 
 # This compose file brings up two services:
-# 1) docker: Docker-in-Docker (DinD) with TLS enabled, exposed via service alias "docker" on 2376
-# 2) jenkins: Jenkins connects to DinD via DOCKER_HOST=tcp://docker:2376 with TLS
-# Meets the assignment requirements: DinD, Jenkins, named volumes (jenkins-home, docker-data, certs), and annotated configuration
+# 1) docker: Docker-in-Docker (DinD) — exposes a remote Docker daemon over TLS for Jenkins
+# 2) jenkins: Jenkins connects to DinD using DOCKER_HOST=tcp://docker:2376 with TLS
+# Requirement check:
+# [i] DinD service allows Jenkins to safely run Docker commands (privileged mode / remote host with TLS)
+# [ii] Jenkins service uses DinD to build images and run pipelines
+# [iii] Named volumes for Jenkins home and Docker layer cache
 
 services:
   docker:
     image: docker:24-dind
     container_name: dind
-    privileged: true           # DinD requires privileged mode
+    privileged: true           # [i] DinD runs in privileged mode to support Docker daemon inside container
     user: root
     environment:
-      DOCKER_TLS_CERTDIR: /certs
+      DOCKER_TLS_CERTDIR: /certs   # [i] Enable TLS certificate directory for secured remote Docker
     volumes:
-      - docker-certs-ca:/certs/ca           # TLS CA certificates
-      - docker-certs-client:/certs/client   # TLS client certificates
-      - jenkins-home:/var/jenkins_home      # Mount path kept for compatibility with the reference doc
-      - docker-data:/var/lib/docker         # Named volume to persist image layers (faster builds)
+      - docker-certs-ca:/certs/ca           # [i] TLS CA certificates (trust root for remote Docker)
+      - docker-certs-client:/certs/client   # [i] TLS client certificates (used by Jenkins for mutual TLS)
+      - jenkins-home:/var/jenkins_home      # [iii] Named volume to persist Jenkins home (shared for inspection/debug)
+      - docker-data:/var/lib/docker         # [iii] Named volume to persist Docker image layers/cache (faster builds)
     networks:
       ci:
         aliases:
-          - docker                           # Allow Jenkins to reach DinD via tcp://docker:2376
+          - docker                           # [i] Network alias "docker" so Jenkins can reach tcp://docker:2376
     healthcheck:
       test: ["CMD", "docker", "info"]
       interval: 10s
@@ -34,15 +37,15 @@ services:
     user: root
     depends_on:
       docker:
-        condition: service_healthy
+        condition: service_healthy           # [ii] Jenkins waits until DinD is healthy before starting
     environment:
-      DOCKER_HOST: "tcp://docker:2376"      # Connect to DinD via service alias with TLS
-      DOCKER_CERT_PATH: "/certs/client"
-      DOCKER_TLS_VERIFY: "1"
+      DOCKER_HOST: "tcp://docker:2376"      # [ii] Jenkins connects to DinD via remote Docker host
+      DOCKER_CERT_PATH: "/certs/client"     # [i][ii] Path to client certs for TLS connection
+      DOCKER_TLS_VERIFY: "1"                # [i][ii] Enforce TLS verification for secure connection
     volumes:
-      - docker-certs-client:/certs/client:ro
-      - jenkins-home:/var/jenkins_home      # Persist Jenkins home
-      - /usr/bin/docker:/usr/bin/docker     # Provide docker CLI inside Jenkins (matches reference)
+      - docker-certs-client:/certs/client:ro # [i][ii] Mount client certs into Jenkins (read-only) for TLS
+      - jenkins-home:/var/jenkins_home      # [iii] Named volume to persist Jenkins home (plugins, jobs, configs)
+      - /usr/bin/docker:/usr/bin/docker     # Optional: provide docker CLI inside Jenkins container
     ports:
       - "8080:8080"
       - "50000:50000"
@@ -53,7 +56,7 @@ networks:
   ci: {}
 
 volumes:
-  jenkins-home:
-  docker-data:
-  docker-certs-ca:
-  docker-certs-client:
+  jenkins-home:      # [iii] Named volume: Jenkins home
+  docker-data:       # [iii] Named volume: Docker image/layer cache
+  docker-certs-ca:   # [i]   Named volume: TLS CA certificates
+  docker-certs-client: # [i] Named volume: TLS client certificates (used by Jenkins)
