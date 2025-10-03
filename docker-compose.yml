@@ -19,7 +19,6 @@ services:
     volumes:
       - docker-certs-ca:/certs/ca           # [i] TLS CA certificates (trust root for remote Docker)
       - docker-certs-client:/certs/client   # [i] TLS client certificates (used by Jenkins for mutual TLS)
-      - jenkins-home:/var/jenkins_home      # [iii] Named volume to persist Jenkins home (shared for inspection/debug)
       - docker-data:/var/lib/docker         # [iii] Named volume to persist Docker image layers/cache (faster builds)
     networks:
       ci:
